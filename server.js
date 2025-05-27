@@ -4,16 +4,11 @@ const net = require('net');
 const server = net.createServer((socket) => {
   console.log('Client connected');
 
-  // Optional: set encoding to automatically handle UTF-8 strings
-  // socket.setEncoding('utf8');
-
   socket.on('data', (data) => {
-    // Ensure data is a Buffer, then decode as UTF-8
-    const message = data.toString('utf8');
+    const message = data.toString('hex');
     console.log('Received:', message);
 
-    // Prepare response and encode as Buffer (UTF-8)
-    const response = Buffer.from('Echo: ' + message, 'utf8');
+    const response = Buffer.from('Echo: ' + message, 'hex');
     socket.write(response);
   });
 
