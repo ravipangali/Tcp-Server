@@ -4,9 +4,17 @@ const net = require('net');
 const server = net.createServer((socket) => {
   console.log('Client connected');
 
+  // Optional: set encoding to automatically handle UTF-8 strings
+  // socket.setEncoding('utf8');
+
   socket.on('data', (data) => {
-    console.log('Received:', data.toString());
-    socket.write('Echo: ' + data); // Echo message back
+    // Ensure data is a Buffer, then decode as UTF-8
+    const message = data.toString('utf8');
+    console.log('Received:', message);
+
+    // Prepare response and encode as Buffer (UTF-8)
+    const response = Buffer.from('Echo: ' + message, 'utf8');
+    socket.write(response);
   });
 
   socket.on('end', () => {
@@ -20,6 +28,7 @@ const server = net.createServer((socket) => {
 
 const PORT = 5000;
 const HOST = '84.247.131.246';
+
 server.listen(PORT, HOST, () => {
-  console.log(`TCP server listening on port ${PORT}`);
+  console.log(`TCP server listening on ${HOST}:${PORT}`);
 });
