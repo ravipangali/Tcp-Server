@@ -1,7 +1,7 @@
 const Gt06 = require('gt06');
 const net = require('net');
 
-const PORT = 5000;
+const PORT = 6000;
 const HOST = '84.247.131.246';
 
 var server = net.createServer((client) => {
