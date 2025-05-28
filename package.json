@@ -17,5 +17,8 @@
   "bugs": {
     "url": "https://github.com/ravipangali/Tcp-Server/issues"
   },
-  "homepage": "https://github.com/ravipangali/Tcp-Server#readme"
+  "homepage": "https://github.com/ravipangali/Tcp-Server#readme",
+  "dependencies": {
+    "gt06": "^1.0.12"
+  }
 }

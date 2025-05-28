@@ -1,29 +1,31 @@
-// server.js
+const Gt06 = require('gt06');
 const net = require('net');
 
-const server = net.createServer((socket) => {
-  console.log('Client connected');
+var server = net.createServer((client) => {
+  var gt06 = new Gt06();
+  console.log('client connected');
 
-  socket.on('data', (data) => {
-    const message = data.toString('hex');
-    console.log('Received:', message);
+  client.on('data', (data) => {
+    try {
+      gt06.parse(data);
+    }
+    catch (e) {
+      console.log('err', e);
+      return;
+    }
 
-    const response = Buffer.from('Echo: ' + message, 'hex');
-    socket.write(response);
-  });
+    if (gt06.expectsResponse) {
+      client.write(gt06.responseMsg);
+    }
 
-  socket.on('end', () => {
-    console.log('Client disconnected');
-  });
+    gt06.msgBuffer.forEach(msg => {
+      console.log(msg);
+    });
 
-  socket.on('error', (err) => {
-    console.error('Socket Error:', err);
+    gt06.clearMsgBuffer();
   });
 });
 
-const PORT = 5000;
-const HOST = '84.247.131.246';
-
-server.listen(PORT, HOST, () => {
-  console.log(`TCP server listening on ${HOST}:${PORT}`);
+server.listen(serverPort, () => {
+  console.log('started server on port:', 4711);
 });
