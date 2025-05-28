@@ -23,6 +23,8 @@ var server = net.createServer((client) => {
 
     gt06.msgBuffer.forEach(msg => {
       console.log(msg);
+      console.log(msg.responseMsg);
+      
     });
 
     gt06.clearMsgBuffer();
@@ -30,5 +32,5 @@ var server = net.createServer((client) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log('started server on port:', 4711);
+  console.log('started server on IP:port:',HOST, PORT);
 });
