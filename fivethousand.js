@@ -9,6 +9,7 @@ var server = net.createServer((client) => {
   console.log('client connected');
 
   client.on('data', (data) => {
+    console.log(`Real Data: ${data}`)
     try {
       gt06.parse(data);
     }
