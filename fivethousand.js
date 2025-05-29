@@ -23,7 +23,8 @@ var server = net.createServer((client) => {
     }
 
     gt06.msgBuffer.forEach(msg => {
-      console.log(msg);
+      console.log("Data:",msg);
+      console.log("Response Msg:",msg.responseMsg);
     });
 
     gt06.clearMsgBuffer();
