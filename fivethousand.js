@@ -82,9 +82,13 @@ const server = net.createServer((socket) => {
     socket.on('data', (data) => {
         buffer = Buffer.concat([buffer, data]);
 
+        console.log('First Buffer:',buffer);
+        
+
         while (buffer.length >= 5) {
             const frame = decoder.decode(buffer);
             if (frame) {
+                console.log('Decoded frame:', frame);
                 console.log('Decoded frame:', frame.toString('hex'));
                 buffer = buffer.slice(frame.length);
             } else {
