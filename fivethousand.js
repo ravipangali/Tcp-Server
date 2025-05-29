@@ -35,7 +35,7 @@
 // });
 
 const net = require('net');
-const Gt06FrameDecoder = require('./gt06FrameDecoder');
+// const Gt06FrameDecoder = require('./gt06FrameDecoder');
 
 class Gt06FrameDecoder {
     decode(buffer) {
