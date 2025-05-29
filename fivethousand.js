@@ -1,15 +1,14 @@
 const Gt06 = require('gt06');
 const net = require('net');
 
-const PORT = 5000;
 const HOST = '84.247.131.246';
+const PORT = 5000;
 
 var server = net.createServer((client) => {
   var gt06 = new Gt06();
   console.log('client connected');
 
   client.on('data', (data) => {
-    console.log(`Real Data: ${data}`)
     try {
       gt06.parse(data);
     }
@@ -23,8 +22,7 @@ var server = net.createServer((client) => {
     }
 
     gt06.msgBuffer.forEach(msg => {
-      console.log("Data:",msg);
-      console.log("Response Msg:",msg.responseMsg);
+      console.log(msg);
     });
 
     gt06.clearMsgBuffer();
@@ -32,5 +30,5 @@ var server = net.createServer((client) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log('started server on IP:port:',HOST, PORT);
+  console.log('started server on port:', 4711);
 });
