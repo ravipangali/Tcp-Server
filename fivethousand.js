@@ -362,7 +362,7 @@ const server = net.createServer((socket) => {
     });
 });
 
-const PORT = 3000;
+const PORT = 5000;
 const HOST = '84.247.131.246';
 server.listen(PORT, HOST, () => {
     console.log(`TCP server listening on port ${PORT}`);
