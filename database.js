@@ -5,22 +5,31 @@ class GT06Database {
   constructor(dbPath = './gt06_data.db') {
     this.dbPath = dbPath;
     this.db = null;
-    this.init();
+    this.initialized = false;
   }
 
   /**
    * Initialize database connection and create tables
    */
-  init() {
+  async init() {
+    if (this.initialized) return Promise.resolve();
+    
     return new Promise((resolve, reject) => {
-      this.db = new sqlite3.Database(this.dbPath, (err) => {
+      this.db = new sqlite3.Database(this.dbPath, async (err) => {
         if (err) {
           console.error('Error opening database:', err);
           reject(err);
           return;
         }
         console.log('Connected to SQLite database');
-        this.createTables().then(resolve).catch(reject);
+        
+        try {
+          await this.createTables();
+          this.initialized = true;
+          resolve();
+        } catch (createErr) {
+          reject(createErr);
+        }
       });
     });
   }
@@ -28,7 +37,7 @@ class GT06Database {
   /**
    * Create database tables
    */
-  createTables() {
+  async createTables() {
     return new Promise((resolve, reject) => {
       // Main packets table
       const createPacketsTable = `
@@ -156,7 +165,47 @@ class GT06Database {
         )
       `;
 
-      // Create indexes for better performance
+      // First create all tables
+      const tables = [
+        createPacketsTable,
+        createGPSTable,
+        createLBSTable,
+        createStatusTable,
+        createAlarmTable,
+        createWifiTable,
+        createWifiAPTable,
+        createSessionsTable
+      ];
+
+      // Create tables sequentially
+      let tableIndex = 0;
+      const createNextTable = () => {
+        if (tableIndex >= tables.length) {
+          // All tables created, now create indexes
+          this.createIndexes().then(resolve).catch(reject);
+          return;
+        }
+
+        this.db.run(tables[tableIndex], (err) => {
+          if (err) {
+            console.error('Error creating table:', err);
+            reject(err);
+            return;
+          }
+          tableIndex++;
+          createNextTable();
+        });
+      };
+
+      createNextTable();
+    });
+  }
+
+  /**
+   * Create database indexes after tables are created
+   */
+  createIndexes() {
+    return new Promise((resolve, reject) => {
       const createIndexes = [
         'CREATE INDEX IF NOT EXISTS idx_packets_timestamp ON packets(timestamp)',
         'CREATE INDEX IF NOT EXISTS idx_packets_terminal_id ON packets(terminal_id)',
@@ -166,35 +215,26 @@ class GT06Database {
         'CREATE INDEX IF NOT EXISTS idx_sessions_status ON device_sessions(status)'
       ];
 
-      const tables = [
-        createPacketsTable,
-        createGPSTable,
-        createLBSTable,
-        createStatusTable,
-        createAlarmTable,
-        createWifiTable,
-        createWifiAPTable,
-        createSessionsTable,
-        ...createIndexes
-      ];
+      let indexCount = 0;
+      const createNextIndex = () => {
+        if (indexCount >= createIndexes.length) {
+          console.log('All database tables and indexes created successfully');
+          resolve();
+          return;
+        }
 
-      let completed = 0;
-      const total = tables.length;
-
-      tables.forEach((sql) => {
-        this.db.run(sql, (err) => {
+        this.db.run(createIndexes[indexCount], (err) => {
           if (err) {
-            console.error('Error creating table:', err);
+            console.error('Error creating index:', err);
             reject(err);
             return;
           }
-          completed++;
-          if (completed === total) {
-            console.log('All database tables created successfully');
-            resolve();
-          }
+          indexCount++;
+          createNextIndex();
         });
-      });
+      };
+
+      createNextIndex();
     });
   }
 

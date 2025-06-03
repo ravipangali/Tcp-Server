@@ -7,7 +7,8 @@ const GT06Database = require('./database');
 const setupAPIRoutes = require('./api_routes');
 
 // Configuration
-const TCP_HOST = '84.247.131.246';
+// const TCP_HOST = '84.247.131.246';
+const TCP_HOST = '0.0.0.0';
 const TCP_PORT = 5000;
 const API_PORT = 3000;
 
