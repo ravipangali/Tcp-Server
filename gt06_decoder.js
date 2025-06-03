@@ -3,7 +3,9 @@ const moment = require('moment');
 class GT06Decoder {
   constructor() {
     this.buffer = Buffer.alloc(0);
-    this.START_BITS = [0x78, 0x78];
+    // GT06 protocol supports both start bit patterns
+    this.START_BITS_78 = [0x78, 0x78];  // Standard packets
+    this.START_BITS_79 = [0x79, 0x79];  // Extended packets
     this.STOP_BITS = [0x0D, 0x0A];
     
     // Protocol command types
@@ -44,15 +46,20 @@ class GT06Decoder {
       0x57: 'WIFI_OFFLINE',
       0x58: 'GPS_DRIVER_BEHAVIOR',
       0x69: 'ICCID_INFO',
+      0x70: 'LOCATION_REPORTING',
       0x80: 'COMMAND_0X80',
       0x81: 'COMMAND_0X81',
       0x82: 'COMMAND_0X82',
+      0x8A: 'GPS_LBS_STATUS_8A',
       0x90: 'COMMAND_0X90',
       0x91: 'COMMAND_0X91',
       0x92: 'COMMAND_0X92',
       0x93: 'COMMAND_0X93',
-      0x94: 'COMMAND_0X94',
-      0x95: 'COMMAND_0X95'
+      0x94: 'INFORMATION_TRANSMISSION',
+      0x95: 'COMMAND_0X95',
+      0x98: 'COMMAND_0X98',
+      0x99: 'COMMAND_0X99',
+      0xA0: 'GPS_LBS_STATUS_A0'
     };
 
     // Response commands that require acknowledgment
@@ -74,24 +81,35 @@ class GT06Decoder {
     const packets = [];
     
     while (this.buffer.length >= 5) { // Minimum packet size
-      const startIndex = this.findStartBits();
+      const startInfo = this.findStartBits();
       
-      if (startIndex === -1) {
+      if (startInfo.index === -1) {
         // No start bits found, clear buffer
         this.buffer = Buffer.alloc(0);
         break;
       }
 
-      if (startIndex > 0) {
+      if (startInfo.index > 0) {
         // Remove data before start bits
-        this.buffer = this.buffer.slice(startIndex);
+        this.buffer = this.buffer.slice(startInfo.index);
       }
 
       if (this.buffer.length < 5) break;
 
-      // Get packet length
-      const lengthByte = this.buffer[2];
-      const totalLength = lengthByte + 5; // +2 start, +1 length, +2 stop
+      // Get packet length - for 7979 packets, length is in different position
+      let lengthByte, totalLength;
+      
+      if (startInfo.isExtended) {
+        // 7979 packets: [79 79] [length MSB] [length LSB] [protocol] [data...] [0D] [0A]
+        // The length field includes protocol + data but not start bits or stop bits
+        if (this.buffer.length < 6) break;
+        lengthByte = this.buffer.readUInt16BE(2); // 2-byte length for extended packets
+        totalLength = lengthByte + 6; // +2 start, +2 length, +2 stop
+      } else {
+        // 7878 packets: [78 78] [length] [protocol] [data...] [serial MSB] [serial LSB] [crc MSB] [crc LSB] [0D] [0A]
+        lengthByte = this.buffer[2];
+        totalLength = lengthByte + 5; // +2 start, +1 length, +2 stop (length includes everything from protocol to crc)
+      }
 
       if (this.buffer.length < totalLength) break;
 
@@ -101,7 +119,7 @@ class GT06Decoder {
       // Verify stop bits
       if (packet[totalLength - 2] === 0x0D && packet[totalLength - 1] === 0x0A) {
         try {
-          const decoded = this.decodePacket(packet);
+          const decoded = this.decodePacket(packet, startInfo.isExtended);
           if (decoded) {
             packets.push(decoded);
           }
@@ -118,39 +136,69 @@ class GT06Decoder {
   }
 
   /**
-   * Find start bits in buffer
+   * Find start bits in buffer - handles both 7878 and 7979
    */
   findStartBits() {
     for (let i = 0; i <= this.buffer.length - 2; i++) {
+      // Check for 7878 start bits
       if (this.buffer[i] === 0x78 && this.buffer[i + 1] === 0x78) {
-        return i;
+        return { index: i, isExtended: false };
+      }
+      // Check for 7979 start bits (extended packets)
+      if (this.buffer[i] === 0x79 && this.buffer[i + 1] === 0x79) {
+        return { index: i, isExtended: true };
       }
     }
-    return -1;
+    return { index: -1, isExtended: false };
   }
 
   /**
    * Decode a complete packet
    */
-  decodePacket(packet) {
+  decodePacket(packet, isExtended = false) {
     if (packet.length < 5) return null;
+
+    let protocolOffset, dataStartOffset, serialOffset, checksumOffset;
+    
+    if (isExtended) {
+      // 7979 packet structure: [79 79] [length MSB] [length LSB] [protocol] [data...] [0D] [0A]
+      // No separate serial number or CRC fields in this format
+      protocolOffset = 4;
+      dataStartOffset = 5;
+      serialOffset = -1; // No serial in this format
+      checksumOffset = -1; // No checksum in this format
+    } else {
+      // 7878 packet structure: [78 78] [length] [protocol] [data...] [serial MSB] [serial LSB] [crc MSB] [crc LSB] [0D] [0A]
+      protocolOffset = 3;
+      dataStartOffset = 4;
+      serialOffset = packet.length - 6; // Serial is 2 bytes before stop bits (0D 0A)
+      checksumOffset = packet.length - 4; // CRC is immediately after serial
+    }
 
     const result = {
       raw: packet.toString('hex').toUpperCase(),
       timestamp: new Date(),
-      length: packet[2],
-      protocol: packet[3],
-      protocolName: this.PROTOCOL_NUMBERS[packet[3]] || 'UNKNOWN',
-      serialNumber: packet.readUInt16BE(packet.length - 4),
-      checksum: packet.readUInt16BE(packet.length - 2),
-      needsResponse: this.RESPONSE_REQUIRED.includes(packet[3])
+      length: isExtended ? packet.readUInt16BE(2) : packet[2],
+      protocol: packet[protocolOffset],
+      protocolName: this.PROTOCOL_NUMBERS[packet[protocolOffset]] || 'UNKNOWN',
+      serialNumber: serialOffset >= 0 ? packet.readUInt16BE(serialOffset) : 0,
+      checksum: checksumOffset >= 0 ? packet.readUInt16BE(checksumOffset) : 0,
+      needsResponse: this.RESPONSE_REQUIRED.includes(packet[protocolOffset]),
+      isExtended: isExtended
     };
 
     // Extract data payload (excluding start, length, protocol, serial, checksum, stop)
-    const dataPayload = packet.slice(4, packet.length - 4);
+    let dataPayload;
+    if (isExtended) {
+      // For 7979, data goes from protocol+1 to end-2 (excluding stop bits)
+      dataPayload = packet.slice(dataStartOffset, packet.length - 2);
+    } else {
+      // For 7878, data goes from protocol+1 to serial
+      dataPayload = packet.slice(dataStartOffset, serialOffset);
+    }
     
     // Decode based on protocol type
-    switch (packet[3]) {
+    switch (packet[protocolOffset]) {
       case 0x01:
         this.decodeLogin(dataPayload, result);
         break;
@@ -158,6 +206,7 @@ class GT06Decoder {
       case 0x11:
       case 0x12:
       case 0x22:
+      case 0xA0:
         this.decodeGPSLBS(dataPayload, result);
         break;
       case 0x13:
@@ -177,6 +226,19 @@ class GT06Decoder {
         break;
       case 0x69:
         this.decodeICCID(dataPayload, result);
+        break;
+      case 0x70:
+        this.decodeLocationReporting(dataPayload, result);
+        break;
+      case 0x8A:
+        this.decodeStatusCommand(dataPayload, result);
+        break;
+      case 0x94:
+        this.decodeInformationTransmission(dataPayload, result);
+        break;
+      case 0x98:
+      case 0x99:
+        this.decodeExtendedCommand(dataPayload, result);
         break;
       default:
         result.data = dataPayload.toString('hex').toUpperCase();
@@ -201,58 +263,74 @@ class GT06Decoder {
    * Decode GPS LBS positioning data
    */
   decodeGPSLBS(data, result) {
-    if (data.length < 21) return;
+    if (data.length < 12) return; // Minimum data required
 
     let offset = 0;
     
     // Date and time (6 bytes)
-    const year = 2000 + data[offset];
-    const month = data[offset + 1];
-    const day = data[offset + 2];
-    const hour = data[offset + 3];
-    const minute = data[offset + 4];
-    const second = data[offset + 5];
-    offset += 6;
+    if (data.length >= 6) {
+      const year = 2000 + data[offset];
+      const month = data[offset + 1];
+      const day = data[offset + 2];
+      const hour = data[offset + 3];
+      const minute = data[offset + 4];
+      const second = data[offset + 5];
+      offset += 6;
 
-    result.gpsTime = moment(`${year}-${month}-${day} ${hour}:${minute}:${second}`, 'YYYY-MM-DD HH:mm:ss').toDate();
-
-    // GPS Info Length
-    const gpsInfoLength = data[offset];
-    offset += 1;
-
-    if (gpsInfoLength > 0 && offset + gpsInfoLength <= data.length) {
-      // Satellites
-      result.satellites = (data[offset] >> 4) & 0x0F;
-      
-      // Latitude (4 bytes)
-      const latRaw = data.readUInt32BE(offset) & 0x0FFFFFFF;
-      result.latitude = latRaw / 1800000.0;
-      offset += 4;
-
-      // Longitude (4 bytes)
-      const lngRaw = data.readUInt32BE(offset);
-      result.longitude = lngRaw / 1800000.0;
-      offset += 4;
-
-      // Speed
-      result.speed = data[offset];
-      offset += 1;
-
-      // Course and status
-      const courseStatus = data.readUInt16BE(offset);
-      result.course = courseStatus & 0x03FF;
-      result.gpsRealTime = (courseStatus & 0x2000) === 0;
-      result.gpsPositioned = (courseStatus & 0x1000) === 0;
-      result.eastLongitude = (courseStatus & 0x0800) === 0;
-      result.northLatitude = (courseStatus & 0x0400) === 0;
-      offset += 2;
-
-      // Adjust longitude and latitude based on direction
-      if (!result.eastLongitude) result.longitude = -result.longitude;
-      if (!result.northLatitude) result.latitude = -result.latitude;
+      // Validate date/time values
+      if (year >= 2000 && year <= 2050 && month >= 1 && month <= 12 && 
+          day >= 1 && day <= 31 && hour <= 23 && minute <= 59 && second <= 59) {
+        result.gpsTime = moment(`${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')} ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:${second.toString().padStart(2, '0')}`, 'YYYY-MM-DD HH:mm:ss').toDate();
+      }
     }
 
-    // LBS Info
+    // GPS Info Length
+    if (offset < data.length) {
+      const gpsInfoLength = data[offset];
+      offset += 1;
+
+      if (gpsInfoLength > 0 && offset + gpsInfoLength <= data.length) {
+        // Satellites and latitude (first 4 bytes)
+        if (offset + 4 <= data.length) {
+          result.satellites = (data[offset] >> 4) & 0x0F;
+          
+          // Latitude (4 bytes)
+          const latRaw = data.readUInt32BE(offset) & 0x0FFFFFFF;
+          result.latitude = latRaw / 1800000.0;
+          offset += 4;
+        }
+
+        // Longitude (4 bytes)
+        if (offset + 4 <= data.length) {
+          const lngRaw = data.readUInt32BE(offset);
+          result.longitude = lngRaw / 1800000.0;
+          offset += 4;
+        }
+
+        // Speed
+        if (offset < data.length) {
+          result.speed = data[offset];
+          offset += 1;
+        }
+
+        // Course and status
+        if (offset + 2 <= data.length) {
+          const courseStatus = data.readUInt16BE(offset);
+          result.course = courseStatus & 0x03FF;
+          result.gpsRealTime = (courseStatus & 0x2000) === 0;
+          result.gpsPositioned = (courseStatus & 0x1000) === 0;
+          result.eastLongitude = (courseStatus & 0x0800) === 0;
+          result.northLatitude = (courseStatus & 0x0400) === 0;
+          offset += 2;
+
+          // Adjust longitude and latitude based on direction
+          if (result.longitude !== undefined && !result.eastLongitude) result.longitude = -result.longitude;
+          if (result.latitude !== undefined && !result.northLatitude) result.latitude = -result.latitude;
+        }
+      }
+    }
+
+    // LBS Info (if remaining data)
     if (offset + 9 <= data.length) {
       result.mcc = data.readUInt16BE(offset);
       result.mnc = data[offset + 2];
@@ -385,6 +463,64 @@ class GT06Decoder {
         iccid += ((byte & 0x0F).toString()) + ((byte >> 4).toString());
       }
       result.iccid = iccid;
+    }
+  }
+
+  /**
+   * Decode status command (0x8A)
+   */
+  decodeStatusCommand(data, result) {
+    if (data.length >= 1) {
+      result.commandType = data[0];
+      result.commandData = data.slice(1).toString('hex').toUpperCase();
+    }
+  }
+
+  /**
+   * Decode information transmission (0x94)
+   */
+  decodeInformationTransmission(data, result) {
+    if (data.length > 0) {
+      // Information transmission typically contains string data
+      try {
+        result.informationData = data.toString('utf8');
+      } catch (error) {
+        result.informationData = data.toString('hex').toUpperCase();
+      }
+    }
+  }
+
+  /**
+   * Decode GPS LBS Status (0xA0) - moved to main GPS decoder
+   */
+  decodeGPSLBSStatus(data, result) {
+    // This is similar to standard GPS LBS but may have different format
+    this.decodeGPSLBS(data, result);
+  }
+
+  /**
+   * Decode location reporting (0x70)
+   */
+  decodeLocationReporting(data, result) {
+    // Location reporting is often similar to GPS LBS data
+    this.decodeGPSLBS(data, result);
+  }
+
+  /**
+   * Decode extended commands (0x98, 0x99)
+   */
+  decodeExtendedCommand(data, result) {
+    if (data.length > 0) {
+      result.commandData = data.toString('hex').toUpperCase();
+      // Try to decode as string if it looks like text
+      try {
+        const textData = data.toString('utf8');
+        if (/^[\x20-\x7E]*$/.test(textData)) { // ASCII printable characters
+          result.commandText = textData;
+        }
+      } catch (error) {
+        // Keep as hex if not valid text
+      }
     }
   }
 
