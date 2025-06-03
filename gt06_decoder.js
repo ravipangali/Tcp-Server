@@ -284,62 +284,158 @@ class GT06Decoder {
       }
     }
 
-    // GPS Info Length
-    if (offset < data.length) {
-      const gpsInfoLength = data[offset];
-      offset += 1;
-
-      if (gpsInfoLength > 0 && offset + gpsInfoLength <= data.length) {
-        // Satellites and latitude (first 4 bytes)
-        if (offset + 4 <= data.length) {
-          result.satellites = (data[offset] >> 4) & 0x0F;
+    // Check if this is an A0 protocol packet (different structure)
+    if (result.protocol === 0xA0) {
+      // For A0 packets, the structure is different after timestamp
+      // Skip GPS Info Length byte and parse directly
+      if (offset < data.length) {
+        // Skip the first byte (it's not GPS info length for A0)
+        offset += 1;
+        
+        // Parse GPS coordinates directly from the known structure
+        if (offset + 12 <= data.length) {
+          // Parse latitude (4 bytes) at offset
+          const latBytes = data.slice(offset, offset + 4);
+          const latRaw = latBytes.readUInt32BE(0);
           
-          // Latitude (4 bytes)
-          const latRaw = data.readUInt32BE(offset) & 0x0FFFFFFF;
-          result.latitude = latRaw / 1800000.0;
+          if (latRaw > 0 && latRaw < 0xFFFFFFFF) {
+            result.latitude = latRaw / 1800000.0;
+          }
           offset += 4;
-        }
-
-        // Longitude (4 bytes)
-        if (offset + 4 <= data.length) {
-          const lngRaw = data.readUInt32BE(offset);
-          result.longitude = lngRaw / 1800000.0;
+          
+          // Parse longitude (4 bytes)
+          const lngBytes = data.slice(offset, offset + 4);
+          const lngRaw = lngBytes.readUInt32BE(0);
+          
+          if (lngRaw > 0 && lngRaw < 0xFFFFFFFF) {
+            result.longitude = lngRaw / 1800000.0;
+          }
           offset += 4;
+          
+          // Speed and course
+          if (offset + 3 <= data.length) {
+            result.speed = data[offset];
+            const courseStatus = data.readUInt16BE(offset + 1);
+            result.course = courseStatus & 0x03FF;
+            
+            // Status flags
+            result.gpsRealTime = (courseStatus & 0x2000) === 0;
+            result.gpsPositioned = (courseStatus & 0x1000) === 0;
+            result.eastLongitude = (courseStatus & 0x0800) === 0;
+            result.northLatitude = (courseStatus & 0x0400) === 0;
+            
+            // Adjust coordinates based on hemisphere flags
+            if (result.longitude !== undefined && !result.eastLongitude) {
+              result.longitude = -result.longitude;
+            }
+            if (result.latitude !== undefined && !result.northLatitude) {
+              result.latitude = -result.latitude;
+            }
+            
+            offset += 3;
+          }
         }
-
-        // Speed
-        if (offset < data.length) {
-          result.speed = data[offset];
+        
+        // Parse LBS data for A0 (might be at a different offset)
+        while (offset + 9 <= data.length) {
+          const testMCC = data.readUInt16BE(offset);
+          // Look for reasonable MCC values (100-999)
+          if (testMCC >= 100 && testMCC <= 999) {
+            result.mcc = testMCC;
+            result.mnc = data[offset + 2];
+            result.lac = data.readUInt16BE(offset + 3);
+            
+            const cellId1 = data[offset + 5];
+            const cellId2 = data[offset + 6];
+            const cellId3 = data[offset + 7];
+            result.cellId = (cellId1 << 16) | (cellId2 << 8) | cellId3;
+            
+            offset += 8;
+            break;
+          }
           offset += 1;
         }
+      }
+    } else {
+      // Original GPS LBS parsing for other protocols
+      if (offset < data.length) {
+        const gpsInfoLength = data[offset];
+        offset += 1;
 
-        // Course and status
-        if (offset + 2 <= data.length) {
-          const courseStatus = data.readUInt16BE(offset);
-          result.course = courseStatus & 0x03FF;
-          result.gpsRealTime = (courseStatus & 0x2000) === 0;
-          result.gpsPositioned = (courseStatus & 0x1000) === 0;
-          result.eastLongitude = (courseStatus & 0x0800) === 0;
-          result.northLatitude = (courseStatus & 0x0400) === 0;
-          offset += 2;
+        if (gpsInfoLength > 0 && gpsInfoLength <= 50 && offset + gpsInfoLength <= data.length) {
+          // GPS data present - extract coordinates
+          
+          // Satellites and latitude (4 bytes)
+          if (offset + 4 <= data.length) {
+            result.satellites = (data[offset] >> 4) & 0x0F;
+            
+            const lat1 = data[offset] & 0x0F;
+            const lat2 = data[offset + 1];
+            const lat3 = data[offset + 2];
+            const lat4 = data[offset + 3];
+            
+            const latRaw = (lat1 << 24) | (lat2 << 16) | (lat3 << 8) | lat4;
+            
+            if (latRaw > 0) {
+              result.latitude = latRaw / 1800000.0;
+            }
+            offset += 4;
+          }
 
-          // Adjust longitude and latitude based on direction
-          if (result.longitude !== undefined && !result.eastLongitude) result.longitude = -result.longitude;
-          if (result.latitude !== undefined && !result.northLatitude) result.latitude = -result.latitude;
+          // Longitude (4 bytes)
+          if (offset + 4 <= data.length) {
+            const lngRaw = data.readUInt32BE(offset);
+            
+            if (lngRaw > 0) {
+              result.longitude = lngRaw / 1800000.0;
+            }
+            offset += 4;
+          }
+
+          // Speed and course
+          if (offset < data.length) {
+            result.speed = data[offset];
+            offset += 1;
+          }
+
+          if (offset + 2 <= data.length) {
+            const courseStatus = data.readUInt16BE(offset);
+            
+            result.course = courseStatus & 0x03FF;
+            result.gpsRealTime = (courseStatus & 0x2000) === 0;
+            result.gpsPositioned = (courseStatus & 0x1000) === 0;
+            result.eastLongitude = (courseStatus & 0x0800) === 0;
+            result.northLatitude = (courseStatus & 0x0400) === 0;
+            
+            offset += 2;
+
+            // Adjust coordinates
+            if (result.longitude !== undefined && !result.eastLongitude) {
+              result.longitude = -result.longitude;
+            }
+            if (result.latitude !== undefined && !result.northLatitude) {
+              result.latitude = -result.latitude;
+            }
+          }
         }
+      }
+
+      // LBS Info for standard protocols
+      if (offset + 9 <= data.length) {
+        result.mcc = data.readUInt16BE(offset);
+        result.mnc = data[offset + 2];
+        result.lac = data.readUInt16BE(offset + 3);
+        
+        const cellId1 = data[offset + 5];
+        const cellId2 = data[offset + 6]; 
+        const cellId3 = data[offset + 7];
+        result.cellId = (cellId1 << 16) | (cellId2 << 8) | cellId3;
+        
+        offset += 8;
       }
     }
 
-    // LBS Info (if remaining data)
-    if (offset + 9 <= data.length) {
-      result.mcc = data.readUInt16BE(offset);
-      result.mnc = data[offset + 2];
-      result.lac = data.readUInt16BE(offset + 3);
-      result.cellId = data.readUInt32BE(offset + 5) >>> 8; // 3 bytes
-      offset += 8;
-    }
-
-    // Additional data for extended protocols
+    // Additional data
     if (data.length > offset) {
       result.additionalData = data.slice(offset).toString('hex').toUpperCase();
     }
@@ -491,22 +587,6 @@ class GT06Decoder {
   }
 
   /**
-   * Decode GPS LBS Status (0xA0) - moved to main GPS decoder
-   */
-  decodeGPSLBSStatus(data, result) {
-    // This is similar to standard GPS LBS but may have different format
-    this.decodeGPSLBS(data, result);
-  }
-
-  /**
-   * Decode location reporting (0x70)
-   */
-  decodeLocationReporting(data, result) {
-    // Location reporting is often similar to GPS LBS data
-    this.decodeGPSLBS(data, result);
-  }
-
-  /**
    * Decode extended commands (0x98, 0x99)
    */
   decodeExtendedCommand(data, result) {
@@ -580,6 +660,22 @@ class GT06Decoder {
    */
   clearBuffer() {
     this.buffer = Buffer.alloc(0);
+  }
+
+  /**
+   * Decode GPS LBS Status (0xA0) - moved to main GPS decoder
+   */
+  decodeGPSLBSStatus(data, result) {
+    // This is similar to standard GPS LBS but may have different format
+    this.decodeGPSLBS(data, result);
+  }
+
+  /**
+   * Decode location reporting (0x70)
+   */
+  decodeLocationReporting(data, result) {
+    // Location reporting is often similar to GPS LBS data
+    this.decodeGPSLBS(data, result);
   }
 }
 

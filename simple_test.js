@@ -39,27 +39,62 @@ async function runTests() {
       console.log('- Protocol:', packets2[0].protocolName);
       console.log('- Is Extended:', packets2[0].isExtended);
       console.log('- Serial:', packets2[0].serialNumber);
+      console.log('- Data:', packets2[0].informationData || packets2[0].data);
     } else {
       console.log('❌ 7979 packet not decoded');
     }
     
-    // Test 1c: GPS LBS packet
-    console.log('\n📍 Testing GPS LBS packet...');
-    const gpsPacket = Buffer.from('78782DA019060311270BC702F84FB00927D44007140001AD01000028AC000000000005030300080100001EDE00068C370D0A', 'hex');
-    console.log('GPS packet:', gpsPacket.toString('hex').toUpperCase());
+    // Test 1c: Real GPS LBS packet (from your actual device)
+    console.log('\n📍 Testing Real GPS LBS packet...');
+    const realGpsPacket = Buffer.from('78782DA019060311270BC702F84FB00927D44007140001AD01000028AC000000000005030300080100001EDE00068C370D0A', 'hex');
+    console.log('GPS packet:', realGpsPacket.toString('hex').toUpperCase());
     
-    const packets3 = decoder.addData(gpsPacket);
+    const packets3 = decoder.addData(realGpsPacket);
     console.log('Decoded packets count:', packets3.length);
     
     if (packets3.length > 0) {
       console.log('✅ GPS packet decoded');
       console.log('- Protocol:', packets3[0].protocolName);
+      console.log('- Terminal ID:', packets3[0].terminalId);
       console.log('- Has GPS:', !!(packets3[0].latitude && packets3[0].longitude));
+      console.log('- GPS Time:', packets3[0].gpsTime);
+      console.log('- Satellites:', packets3[0].satellites);
       if (packets3[0].latitude && packets3[0].longitude) {
         console.log('- Location:', packets3[0].latitude.toFixed(6), packets3[0].longitude.toFixed(6));
       }
+      if (packets3[0].mcc) {
+        console.log('- LBS MCC/MNC:', packets3[0].mcc, '/', packets3[0].mnc);
+        console.log('- LAC/Cell ID:', packets3[0].lac, '/', packets3[0].cellId);
+      }
+      // Print complete JSON for this packet
+      console.log('\n🔍 Complete decoded packet data:');
+      console.log(JSON.stringify(packets3[0], (key, value) => {
+        // Convert dates to readable strings
+        if (value instanceof Date) {
+          return value.toISOString();
+        }
+        return value;
+      }, 2));
     } else {
       console.log('❌ GPS packet not decoded');
+    }
+    
+    // Test 1d: Status info packet
+    console.log('\n📊 Testing Status Info packet...');
+    const statusPacket = Buffer.from('78780A1305060400020005A3230D0A', 'hex');
+    console.log('Status packet:', statusPacket.toString('hex').toUpperCase());
+    
+    const packets4 = decoder.addData(statusPacket);
+    console.log('Decoded packets count:', packets4.length);
+    
+    if (packets4.length > 0) {
+      console.log('✅ Status packet decoded');
+      console.log('- Protocol:', packets4[0].protocolName);
+      console.log('- Terminal Info:', packets4[0].terminalInfo);
+      console.log('- Voltage:', packets4[0].voltage);
+      console.log('- GSM Signal Strength:', packets4[0].gsmSignalStrength);
+    } else {
+      console.log('❌ Status packet not decoded');
     }
     
   } catch (error) {
@@ -101,6 +136,10 @@ async function runTests() {
   console.log('\n📋 The server will handle both:');
   console.log('   - 7878 standard GT06 packets');
   console.log('   - 7979 extended GT06 packets');
+  console.log('   - GPS positioning data');
+  console.log('   - Device status information');
+  console.log('   - LBS (cell tower) data');
+  console.log('   - Alarm and alert data');
 }
 
 runTests().catch(console.error); 
